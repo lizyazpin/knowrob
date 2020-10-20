@@ -30,6 +30,7 @@
 
 :- module(knowrob_transforms,
     [
+      map_frame/1,
       map_frame_name/1,             % +Name
       transform_reference_frame/2,  % +Transform, ?ReferenceFrame
       transform_data/2,             % +Transform, ?(Translation, Rotation)
@@ -49,18 +50,20 @@
 @license BSD
 */
 
-:- use_foreign_library('libpl_eigen.so').
-
 :- use_module(library('semweb/rdf_db')).
 :- use_module(library('semweb/rdfs')).
 :- use_module(library('semweb/owl')).
-:- use_module(library('knowrob/knowrob')).
+:- use_module(library('knowrob/rdfs')).
 
 :-  rdf_meta
     transform_reference_frame(r,?),
     transform_data(r,?).
 
 :- rdf_db:rdf_register_ns(knowrob,'http://knowrob.org/kb/knowrob.owl#', [keep(true)]).
+
+%% map_frame(?MapFrame).
+% True if MapFrame is the OWL individual that corresponds to the global coordinate system.
+map_frame('http://knowrob.org/kb/knowrob.owl#MapFrame').
 
 %% map_frame_name(?Name:atom) is det.
 %
@@ -126,9 +129,34 @@ transform_between([F,TgFrame, [T1x,T1y,T1z],Q1],
 %
 transform_data([_,_,Pos,Rot], (Pos,Rot)) :- !.
 
-transform_data(Transform, ([X,Y,Z],[QX,QY,QZ,QW])) :-
-  kb_triple(Transform, ease_obj:hasPositionVector, [X,Y,Z]),
-  kb_triple(Transform, ease_obj:hasOrientationVector, [QX,QY,QZ,QW]),!.
+transform_data(Transform, (Pos,Rot)) :-
+  rdf_has_prolog(Transform, knowrob:translation, Pos),
+  rdf_has_prolog(Transform, knowrob:quaternion, Rot), !.
+
+transform_data(Transform, (Pos, Rot)) :-
+  matrix_prolog(Transform, Matrix),
+  matrix(Matrix, Pos, Rot).
+
+matrix_prolog(RDF, [M00, M01, M02, M03,
+                    M10, M11, M12, M13,
+                    M20, M21, M22, M23,
+                    M30, M31, M32, M33]) :-
+  rdf_has_prolog(RDF, knowrob:m00, M00),
+  rdf_has_prolog(RDF, knowrob:m01, M01),
+  rdf_has_prolog(RDF, knowrob:m02, M02),
+  rdf_has_prolog(RDF, knowrob:m03, M03),
+  rdf_has_prolog(RDF, knowrob:m10, M10),
+  rdf_has_prolog(RDF, knowrob:m11, M11),
+  rdf_has_prolog(RDF, knowrob:m12, M12),
+  rdf_has_prolog(RDF, knowrob:m13, M13),
+  rdf_has_prolog(RDF, knowrob:m20, M20),
+  rdf_has_prolog(RDF, knowrob:m21, M21),
+  rdf_has_prolog(RDF, knowrob:m22, M22),
+  rdf_has_prolog(RDF, knowrob:m23, M23),
+  rdf_has_prolog(RDF, knowrob:m30, M30),
+  rdf_has_prolog(RDF, knowrob:m31, M31),
+  rdf_has_prolog(RDF, knowrob:m32, M32),
+  rdf_has_prolog(RDF, knowrob:m33, M33).
 
 %% transform_invert(+Transform:term, ?Inverted:term) is det.
 %
@@ -155,7 +183,8 @@ transform_invert([A,B,[TX,TY,TZ],Q],
 %
 transform_reference_frame([Ref, _, _, _], Ref) :- !.
 transform_reference_frame(Transform, Ref) :-
-  kb_triple(Transform, ease_obj:hasReferenceFrame, Ref), !.
+  rdf_has(Transform, knowrob:'relativeTo', RefObjId),
+  object_frame_name(RefObjId, Ref), !.
 transform_reference_frame(_TransformId, MapFrame) :-
   map_frame_name(MapFrame).
 
@@ -188,13 +217,20 @@ transform_close_to(
 % @param Quaternion A quaternion [number qx,qy,qz,qw]
 %
 matrix(Matrix, Translation, Quaternion) :-
-  ground(Matrix), !,
-  matrix_translation(Matrix,Translation),
-  matrix_quaternion(Matrix,Quaternion).
-
-matrix(Matrix, Translation, Quaternion) :-
   ground([Translation,Quaternion]), !,
-  matrix_create(Quaternion, Translation, Matrix).
+  jpl_list_to_array(Translation, TranslationArr),
+  jpl_list_to_array(Quaternion, OrientationArr),
+  jpl_call('org.knowrob.utils.MathUtil', 'matrix', [TranslationArr,OrientationArr], MatrixArr),
+  jpl_array_to_list(MatrixArr, Matrix).
+
+matrix(Matrix, [X,Y,Z], Quaternion) :-
+  ground(Matrix), !,
+  nth0( 3, Matrix, X),
+  nth0( 7, Matrix, Y),
+  nth0(11, Matrix, Z),
+  jpl_list_to_array(Matrix, MatrixArr),
+  jpl_call('org.knowrob.utils.MathUtil', 'matrixToQuaternion', [MatrixArr], QuaternionArr),
+  jpl_array_to_list(QuaternionArr, Quaternion).
 
 %% matrix_translate(+In:list, +Offset:list, ?Out:list) is semidet.
 %
@@ -226,20 +262,34 @@ matrix_translate([M00, M01, M02, MX,
 % @param Quaternion2 A quaternion [number qx,qy,qt,qw]
 % @param Multiplied A quaternion [number qx,qy,qt,qw]
 %
+quaternion_multiply(Quaternion1, Quaternion2, Multiplied) :-
+  jpl_list_to_array(Quaternion1, Q0_array),
+  jpl_list_to_array(Quaternion2, Q1_array),
+  jpl_call('org.knowrob.utils.MathUtil', 'quaternionMultiply', [Q0_array, Q1_array], Out_array),
+  jpl_array_to_list(Out_array, Multiplied).
 
-%%% quaternion_inverse(+Quaternion:list, ?Inverse:list) is semidet.
-%%
-%% True if Inverse is the inverse of Quaternion.
-%%
-%% @param Quaternion A quaternion [number qx,qy,qt,qw]
-%% @param Inverse A quaternion [number qx,qy,qt,qw]
-%%
+%% quaternion_inverse(+Quaternion:list, ?Inverse:list) is semidet.
+%
+% True if Inverse is the inverse of Quaternion.
+%
+% @param Quaternion A quaternion [number qx,qy,qt,qw]
+% @param Inverse A quaternion [number qx,qy,qt,qw]
+%
+quaternion_inverse(Quaternion, Inverse) :-
+  jpl_list_to_array(Quaternion, Q_array),
+  jpl_call('org.knowrob.utils.MathUtil', 'quaternionInverse', [Q_array], Out_array),
+  jpl_array_to_list(Out_array, Inverse).
 
-%%% quaternion_transform(+Quaternion:list, +Vector:list, ?Transformed:list) is semidet.
-%%
-%% True if Transformed unifies with Vector rotated by Quaternion.
-%%
-%% @param Quaternion A quaternion [number qx,qy,qt,qw]
-%% @param Vector A position vector [number x,y,z]
-%% @param Transformed A position vector [number x,y,z]
-%%
+%% quaternion_transform(+Quaternion:list, +Vector:list, ?Transformed:list) is semidet.
+%
+% True if Transformed unifies with Vector rotated by Quaternion.
+%
+% @param Quaternion A quaternion [number qx,qy,qt,qw]
+% @param Vector A position vector [number x,y,z]
+% @param Transformed A position vector [number x,y,z]
+%
+quaternion_transform(Quaternion, Vector, Transformed) :-
+  jpl_list_to_array(Quaternion, Q_array),
+  jpl_list_to_array(Vector, T_array),
+  jpl_call('org.knowrob.utils.MathUtil', 'quaternionTransform', [Q_array,T_array], Out_array),
+  jpl_array_to_list(Out_array, Transformed).

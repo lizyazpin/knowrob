@@ -35,8 +35,6 @@
 @license BSD
 */
 
-%% TODO: QUDT does not work with OWL. Either wait for a OWL version or find another ontology.
-
 :- use_module(library('semweb/rdfs')).
 :- use_module(library('semweb/owl_parser')).
 :- use_module(library('semweb/owl')).
@@ -45,7 +43,7 @@
 
 :- rdf_meta(convert_to_unit(r,r,r)).
 
-:- owl_parse('http://knowrob.org/kb/knowrob_units.owl').
+:- owl_parse('package://knowrob_common/owl/knowrob_units.owl').
 
 :- rdf_db:rdf_register_ns(knowrob, 'http://knowrob.org/kb/knowrob.owl#', [keep(true)]).
 :- rdf_db:rdf_register_ns(knowrob_units, 'http://knowrob.org/kb/knowrob_units.owl#', [keep(true)]).
